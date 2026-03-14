@@ -1,0 +1,9 @@
+resources:
+- ../../base
+
+namespace: webscraper-dev
+
+namePrefix: dev-
+labels:
+- pairs:
+    environment: development
