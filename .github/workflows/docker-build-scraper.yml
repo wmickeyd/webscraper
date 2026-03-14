@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'webscraper/**' # Only run when files in the webscraper folder change
+      - '**' # Run when any file in this repo changes
 
 jobs:
   build-and-push:
