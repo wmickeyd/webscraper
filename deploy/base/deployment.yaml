@@ -22,6 +22,9 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 8000
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://scraper_user:scraper_pass@postgres:5432/scraper_db"
         resources:
           limits:
             cpu: "500m"
