@@ -1,19 +1,10 @@
 FROM python:3.12-slim
 
 # Install system dependencies, Chromium, and Chromium Driver
+# Debian-based slim images use 'chromium' and 'chromium-driver'
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-driver \
-    libnss3 \
-    libgconf-2-4 \
-    libxi6 \
-    libxcursor1 \
-    libxss1 \
-    libxcomposite1 \
-    libasound2 \
-    libxtst6 \
-    libatk1.0-0 \
-    libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
