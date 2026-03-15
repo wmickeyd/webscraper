@@ -140,7 +140,7 @@ def get_main_text(url, timeout=10):
     except Exception as e:
         return f"Error reading page: {e}"
 
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 app = FastAPI()
 
