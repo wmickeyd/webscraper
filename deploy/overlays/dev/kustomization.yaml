@@ -7,3 +7,12 @@ namePrefix: dev-
 labels:
 - pairs:
     environment: development
+
+patches:
+- target:
+    kind: Deployment
+    name: webscraper
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/env/0/value
+      value: "postgresql://scraper_user:scraper_pass@dev-postgres:5432/scraper_db"

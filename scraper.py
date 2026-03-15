@@ -194,7 +194,7 @@ def list_tracked(db: Session = Depends(database.get_db)):
     sets = db.query(models.TrackedSet).all()
     results = []
     for s in sets:
-        latest_price = db.query(models.PriceHistory).filter(models.PriceHistory.set_id == s.id).order_level(models.PriceHistory.timestamp.desc()).first()
+        latest_price = db.query(models.PriceHistory).filter(models.PriceHistory.set_id == s.id).order_by(models.PriceHistory.timestamp.desc()).first()
         results.append({
             "name": s.name,
             "product_number": s.product_number,

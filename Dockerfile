@@ -15,7 +15,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code
-COPY scraper.py .
+COPY *.py .
 
 # Set environment variables for Chromium
 ENV CHROME_BIN=/usr/bin/chromium
