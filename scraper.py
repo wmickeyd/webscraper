@@ -158,18 +158,25 @@ def health_check(db: Session = Depends(database.get_db)):
 
 @app.get("/search")
 def search(q: str = Query(..., description="Search query")):
+    logger.info(f"Received search request for: {q}")
     with DDGS() as ddgs:
         results = [r for r in ddgs.text(q, max_results=5)]
+    logger.info(f"Search successful for '{q}', found {len(results)} results.")
     return JSONResponse({"query": q, "results": results})
 
 @app.get("/read")
 def read(url: str = Query(..., description="URL to read")):
-    return JSONResponse({"url": url, "content": get_main_text(url)})
+    logger.info(f"Received read request for: {url}")
+    content = get_main_text(url)
+    logger.info(f"Read successful for {url}, extracted {len(content)} characters.")
+    return JSONResponse({"url": url, "content": content})
 
 @app.get("/scrape")
 def scrape(url: str = Query(..., description="Product URL")):
+    logger.info(f"Received scrape request for: {url}")
     name, product_number = parse_name_and_number(url)
     price = get_price(url)
+    logger.info(f"Scrape successful: {name} ({product_number}) - Price: {price}")
     return JSONResponse({
         "name": name.title() if name else "",
         "product_number": product_number or "",
@@ -178,13 +185,16 @@ def scrape(url: str = Query(..., description="Product URL")):
 
 @app.post("/track")
 async def track_set(url: str = Query(...), db: Session = Depends(database.get_db)):
+    logger.info(f"Received track request for: {url}")
     name, product_number = parse_name_and_number(url)
     if not product_number:
+        logger.warning(f"Failed to track URL (invalid LEGO URL): {url}")
         return JSONResponse({"error": "Invalid LEGO URL"}, status_code=400)
     
     # Check if already tracking
     existing = db.query(models.TrackedSet).filter(models.TrackedSet.product_number == product_number).first()
     if existing:
+        logger.info(f"Already tracking set: {existing.name} ({product_number})")
         return JSONResponse({"message": f"Already tracking {existing.name}", "id": existing.id})
     
     price_str = get_price(url)
@@ -199,7 +209,8 @@ async def track_set(url: str = Query(...), db: Session = Depends(database.get_db
         history = models.PriceHistory(set_id=new_set.id, price=price_float)
         db.add(history)
         db.commit()
-        
+    
+    logger.info(f"Successfully added set to tracking database: {new_set.name} ({product_number}) at ${price_float}")
     return JSONResponse({"message": f"Now tracking {new_set.name}", "price": price_float})
 
 @app.get("/tracked")
