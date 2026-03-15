@@ -8,6 +8,7 @@ import logging
 from urllib.parse import urlparse, unquote
 from datetime import datetime
 import certifi
+import html2text
 
 # FastAPI imports
 from fastapi import FastAPI, Query, Depends, BackgroundTasks
@@ -130,19 +131,30 @@ def get_main_text(url, timeout=10):
     try:
         r = requests.get(url, headers=HEADERS, timeout=timeout, verify=certifi.where())
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        for s in soup(["script", "style", "header", "footer", "nav"]):
-            s.decompose()
-        text = soup.get_text()
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        return '\n'.join(chunk for chunk in chunks if chunk)[:4000]
+        
+        # Convert HTML to clean Markdown
+        h = html2text.HTML2Text()
+        h.ignore_links = False
+        h.ignore_images = True
+        h.bypass_tables = False
+        
+        return h.handle(r.text)[:6000] # Increased limit for better context
     except Exception as e:
         return f"Error reading page: {e}"
 
 from ddgs import DDGS
 
 app = FastAPI()
+
+@app.get("/health")
+def health_check(db: Session = Depends(database.get_db)):
+    """K8s health check endpoint."""
+    try:
+        # Check DB
+        db.execute("SELECT 1")
+        return {"status": "healthy", "database": "up"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "unhealthy", "error": str(e)})
 
 @app.get("/search")
 def search(q: str = Query(..., description="Search query")):
