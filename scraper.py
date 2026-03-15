@@ -7,6 +7,7 @@ import asyncio
 import logging
 from urllib.parse import urlparse, unquote
 from datetime import datetime
+import certifi
 
 # FastAPI imports
 from fastapi import FastAPI, Query, Depends, BackgroundTasks
@@ -69,7 +70,7 @@ def _find_price_in_json(obj):
 
 def get_price(url, timeout=10):
     try:
-        r = requests.get(url, headers=HEADERS, timeout=timeout)
+        r = requests.get(url, headers=HEADERS, timeout=timeout, verify=certifi.where())
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         for s in soup.find_all("script", type="application/ld+json"):
@@ -127,7 +128,7 @@ def parse_name_and_number(url):
 
 def get_main_text(url, timeout=10):
     try:
-        r = requests.get(url, headers=HEADERS, timeout=timeout)
+        r = requests.get(url, headers=HEADERS, timeout=timeout, verify=certifi.where())
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         for s in soup(["script", "style", "header", "footer", "nav"]):

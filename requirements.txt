@@ -4,7 +4,8 @@ requests
 beautifulsoup4
 selenium
 webdriver-manager
-duckduckgo-search
+ddgs
 sqlalchemy
 psycopg2-binary
 alembic
+certifi
