@@ -190,6 +190,18 @@ def search(q: str = Query(..., description="Search query")):
     logger.info(f"Search successful for '{q}', found {len(results)} results.")
     return JSONResponse({"query": q, "results": results})
 
+@app.get("/image_search")
+def image_search(q: str = Query(..., description="Image search query")):
+    logger.info(f"Received image search request for: {q}")
+    try:
+        with DDGS() as ddgs:
+            results = [r for r in ddgs.images(q, max_results=3)]
+        logger.info(f"Image search successful for '{q}', found {len(results)} results.")
+        return JSONResponse({"query": q, "results": results})
+    except Exception as e:
+        logger.error(f"Error in image search for {q}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.get("/read")
 def read(url: str = Query(..., description="URL to read")):
     logger.info(f"Received read request for: {url}")
