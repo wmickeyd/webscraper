@@ -9,6 +9,7 @@ from urllib.parse import urlparse, unquote
 from datetime import datetime
 import certifi
 import html2text
+import yfinance as yf
 
 # FastAPI imports
 from fastapi import FastAPI, Query, Depends, BackgroundTasks
@@ -155,6 +156,31 @@ def health_check(db: Session = Depends(database.get_db)):
         return {"status": "healthy", "database": "up"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "unhealthy", "error": str(e)})
+
+@app.get("/finance")
+def get_finance(symbol: str = Query(..., description="Ticker symbol (e.g. AAPL, BTC-USD)")):
+    logger.info(f"Received finance request for: {symbol}")
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.fast_info
+        price = info.get('last_price')
+        currency = info.get('currency', 'USD')
+        
+        # Get a bit more context if available
+        meta = ticker.info
+        name = meta.get('longName', symbol)
+        
+        logger.info(f"Finance data for {symbol}: {price} {currency}")
+        return JSONResponse({
+            "symbol": symbol,
+            "name": name,
+            "price": round(price, 2) if price else "N/A",
+            "currency": currency,
+            "change_percent": round(info.get('year_high') / price, 2) if price else "N/A" # Simple placeholder for more metrics
+        })
+    except Exception as e:
+        logger.error(f"Error fetching finance data for {symbol}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/search")
 def search(q: str = Query(..., description="Search query")):
