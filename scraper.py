@@ -327,6 +327,20 @@ async def track_set(url: str = Query(...), db: Session = Depends(database.get_db
     logger.info(f"Successfully added set to tracking database: {new_set.name} ({product_number}) at ${price_float}")
     return JSONResponse({"message": f"Now tracking {new_set.name}", "price": price_float})
 
+@app.delete("/track/{product_number}")
+def delete_tracked(product_number: str, db: Session = Depends(database.get_db)):
+    logger.info(f"Received delete request for tracked set: {product_number}")
+    tracked_set = db.query(models.TrackedSet).filter(models.TrackedSet.product_number == product_number).first()
+    if not tracked_set:
+        return JSONResponse({"error": "Set not found"}, status_code=404)
+    
+    # Cascade delete (manually if not set in DB schema)
+    db.query(models.PriceHistory).filter(models.PriceHistory.set_id == tracked_set.id).delete()
+    db.delete(tracked_set)
+    db.commit()
+    logger.info(f"Successfully deleted tracked set: {product_number}")
+    return JSONResponse({"message": f"Deleted set {product_number}"})
+
 @app.get("/tracked")
 def list_tracked(db: Session = Depends(database.get_db)):
     sets = db.query(models.TrackedSet).all()
