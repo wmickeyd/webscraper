@@ -202,6 +202,82 @@ def image_search(q: str = Query(..., description="Image search query")):
         logger.error(f"Error in image search for {q}: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
+@app.get("/news")
+def get_news(q: str = Query(..., description="News topic")):
+    logger.info(f"Received news request for: {q}")
+    try:
+        with DDGS() as ddgs:
+            results = [r for r in ddgs.news(q, max_results=5)]
+        logger.info(f"News search successful for '{q}', found {len(results)} results.")
+        return JSONResponse({"query": q, "results": results})
+    except Exception as e:
+        logger.error(f"Error in news search for {q}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/weather")
+def get_weather(location: str = Query(..., description="Location (e.g. London, New York)")):
+    logger.info(f"Received weather request for: {location}")
+    try:
+        # Use wttr.in which is a great free weather service
+        url = f"https://wttr.in/{location}?format=j1"
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        
+        current = data['current_condition'][0]
+        weather_desc = current['weatherDesc'][0]['value']
+        temp_c = current['temp_C']
+        humidity = current['humidity']
+        feels_like = current['FeelsLikeC']
+        
+        return JSONResponse({
+            "location": location,
+            "condition": weather_desc,
+            "temp": f"{temp_c}°C",
+            "feels_like": f"{feels_like}°C",
+            "humidity": f"{humidity}%"
+        })
+    except Exception as e:
+        logger.error(f"Error fetching weather for {location}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/reddit")
+def get_reddit(url: str = Query(..., description="Reddit URL")):
+    logger.info(f"Received Reddit request for: {url}")
+    try:
+        if ".json" not in url:
+            # Append .json to the URL if it doesn't have it, but before any query params
+            parsed = urlparse(url)
+            url = f"https://{parsed.netloc}{parsed.path}.json"
+            if parsed.query:
+                url += f"?{parsed.query}"
+        
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        
+        # Extract post content and top comments
+        post_data = data[0]['data']['children'][0]['data']
+        title = post_data.get('title')
+        selftext = post_data.get('selftext', '')
+        
+        comments = []
+        for child in data[1]['data']['children'][:5]: # Top 5 comments
+            if child['kind'] == 't1': # t1 is a comment
+                comments.append({
+                    "author": child['data'].get('author'),
+                    "body": child['data'].get('body')
+                })
+        
+        return JSONResponse({
+            "title": title,
+            "content": selftext[:2000],
+            "comments": comments
+        })
+    except Exception as e:
+        logger.error(f"Error fetching Reddit thread for {url}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.get("/read")
 def read(url: str = Query(..., description="URL to read")):
     logger.info(f"Received read request for: {url}")
