@@ -152,14 +152,18 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         logger.info("Background task cancelled")
 
+from sqlalchemy import text
+
 app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 def health_check(db: Session = Depends(database.get_db)):
     try:
-        db.execute("SELECT 1")
+        # Use text() for SQLAlchemy 2.0 compatibility
+        db.execute(text("SELECT 1"))
         return {"status": "healthy", "database": "up"}
     except Exception as e:
+        logger.error(f"Health check failed: {e}")
         return JSONResponse(status_code=500, content={"status": "unhealthy", "error": str(e)})
 
 @app.get("/read")
