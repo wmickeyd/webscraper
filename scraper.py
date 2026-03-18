@@ -6,10 +6,9 @@ import re
 import asyncio
 import logging
 from urllib.parse import urlparse, unquote
-from datetime import datetime
+from datetime import datetime, timezone
 import certifi
 import html2text
-import yfinance as yf
 
 # FastAPI imports
 from fastapi import FastAPI, Query, Depends, BackgroundTasks
@@ -43,7 +42,6 @@ def _clean_price(price_str):
     if not price_str:
         return None
     try:
-        # Remove currency symbols and commas
         cleaned = re.sub(r'[^\d.]', '', str(price_str))
         return float(cleaned)
     except (ValueError, TypeError):
@@ -132,157 +130,28 @@ def get_main_text(url, timeout=10):
     try:
         r = requests.get(url, headers=HEADERS, timeout=timeout, verify=certifi.where())
         r.raise_for_status()
-        
-        # Convert HTML to clean Markdown
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.ignore_images = True
         h.bypass_tables = False
-        
-        return h.handle(r.text)[:6000] # Increased limit for better context
+        return h.handle(r.text)[:6000]
     except Exception as e:
         return f"Error reading page: {e}"
-
-from ddgs import DDGS
 
 app = FastAPI()
 
 @app.get("/health")
 def health_check(db: Session = Depends(database.get_db)):
-    """K8s health check endpoint."""
     try:
-        # Check DB
         db.execute("SELECT 1")
         return {"status": "healthy", "database": "up"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "unhealthy", "error": str(e)})
 
-@app.get("/finance")
-def get_finance(symbol: str = Query(..., description="Ticker symbol (e.g. AAPL, BTC-USD)")):
-    logger.info(f"Received finance request for: {symbol}")
-    try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.fast_info
-        price = info.get('last_price')
-        currency = info.get('currency', 'USD')
-        
-        # Get a bit more context if available
-        meta = ticker.info
-        name = meta.get('longName', symbol)
-        
-        logger.info(f"Finance data for {symbol}: {price} {currency}")
-        return JSONResponse({
-            "symbol": symbol,
-            "name": name,
-            "price": round(price, 2) if price else "N/A",
-            "currency": currency,
-            "change_percent": round(info.get('year_high') / price, 2) if price else "N/A" # Simple placeholder for more metrics
-        })
-    except Exception as e:
-        logger.error(f"Error fetching finance data for {symbol}: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.get("/search")
-def search(q: str = Query(..., description="Search query")):
-    logger.info(f"Received search request for: {q}")
-    with DDGS() as ddgs:
-        results = [r for r in ddgs.text(q, max_results=5)]
-    logger.info(f"Search successful for '{q}', found {len(results)} results.")
-    return JSONResponse({"query": q, "results": results})
-
-@app.get("/image_search")
-def image_search(q: str = Query(..., description="Image search query")):
-    logger.info(f"Received image search request for: {q}")
-    try:
-        with DDGS() as ddgs:
-            results = [r for r in ddgs.images(q, max_results=3)]
-        logger.info(f"Image search successful for '{q}', found {len(results)} results.")
-        return JSONResponse({"query": q, "results": results})
-    except Exception as e:
-        logger.error(f"Error in image search for {q}: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.get("/news")
-def get_news(q: str = Query(..., description="News topic")):
-    logger.info(f"Received news request for: {q}")
-    try:
-        with DDGS() as ddgs:
-            results = [r for r in ddgs.news(q, max_results=5)]
-        logger.info(f"News search successful for '{q}', found {len(results)} results.")
-        return JSONResponse({"query": q, "results": results})
-    except Exception as e:
-        logger.error(f"Error in news search for {q}: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.get("/weather")
-def get_weather(location: str = Query(..., description="Location (e.g. London, New York)")):
-    logger.info(f"Received weather request for: {location}")
-    try:
-        # Use wttr.in which is a great free weather service
-        url = f"https://wttr.in/{location}?format=j1"
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        
-        current = data['current_condition'][0]
-        weather_desc = current['weatherDesc'][0]['value']
-        temp_c = current['temp_C']
-        humidity = current['humidity']
-        feels_like = current['FeelsLikeC']
-        
-        return JSONResponse({
-            "location": location,
-            "condition": weather_desc,
-            "temp": f"{temp_c}°C",
-            "feels_like": f"{feels_like}°C",
-            "humidity": f"{humidity}%"
-        })
-    except Exception as e:
-        logger.error(f"Error fetching weather for {location}: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.get("/reddit")
-def get_reddit(url: str = Query(..., description="Reddit URL")):
-    logger.info(f"Received Reddit request for: {url}")
-    try:
-        if ".json" not in url:
-            # Append .json to the URL if it doesn't have it, but before any query params
-            parsed = urlparse(url)
-            url = f"https://{parsed.netloc}{parsed.path}.json"
-            if parsed.query:
-                url += f"?{parsed.query}"
-        
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        
-        # Extract post content and top comments
-        post_data = data[0]['data']['children'][0]['data']
-        title = post_data.get('title')
-        selftext = post_data.get('selftext', '')
-        
-        comments = []
-        for child in data[1]['data']['children'][:5]: # Top 5 comments
-            if child['kind'] == 't1': # t1 is a comment
-                comments.append({
-                    "author": child['data'].get('author'),
-                    "body": child['data'].get('body')
-                })
-        
-        return JSONResponse({
-            "title": title,
-            "content": selftext[:2000],
-            "comments": comments
-        })
-    except Exception as e:
-        logger.error(f"Error fetching Reddit thread for {url}: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
 @app.get("/read")
 def read(url: str = Query(..., description="URL to read")):
     logger.info(f"Received read request for: {url}")
     content = get_main_text(url)
-    logger.info(f"Read successful for {url}, extracted {len(content)} characters.")
     return JSONResponse({"url": url, "content": content})
 
 @app.get("/scrape")
@@ -290,7 +159,6 @@ def scrape(url: str = Query(..., description="Product URL")):
     logger.info(f"Received scrape request for: {url}")
     name, product_number = parse_name_and_number(url)
     price = get_price(url)
-    logger.info(f"Scrape successful: {name} ({product_number}) - Price: {price}")
     return JSONResponse({
         "name": name.title() if name else "",
         "product_number": product_number or "",
@@ -302,18 +170,14 @@ async def track_set(url: str = Query(...), db: Session = Depends(database.get_db
     logger.info(f"Received track request for: {url}")
     name, product_number = parse_name_and_number(url)
     if not product_number:
-        logger.warning(f"Failed to track URL (invalid LEGO URL): {url}")
         return JSONResponse({"error": "Invalid LEGO URL"}, status_code=400)
     
-    # Check if already tracking
     existing = db.query(models.TrackedSet).filter(models.TrackedSet.product_number == product_number).first()
     if existing:
-        logger.info(f"Already tracking set: {existing.name} ({product_number})")
         return JSONResponse({"message": f"Already tracking {existing.name}", "id": existing.id})
     
     price_str = get_price(url)
     price_float = _clean_price(price_str)
-    
     new_set = models.TrackedSet(name=name.title(), product_number=product_number, url=url)
     db.add(new_set)
     db.commit()
@@ -323,22 +187,16 @@ async def track_set(url: str = Query(...), db: Session = Depends(database.get_db
         history = models.PriceHistory(set_id=new_set.id, price=price_float)
         db.add(history)
         db.commit()
-    
-    logger.info(f"Successfully added set to tracking database: {new_set.name} ({product_number}) at ${price_float}")
     return JSONResponse({"message": f"Now tracking {new_set.name}", "price": price_float})
 
 @app.delete("/track/{product_number}")
 def delete_tracked(product_number: str, db: Session = Depends(database.get_db)):
-    logger.info(f"Received delete request for tracked set: {product_number}")
     tracked_set = db.query(models.TrackedSet).filter(models.TrackedSet.product_number == product_number).first()
     if not tracked_set:
         return JSONResponse({"error": "Set not found"}, status_code=404)
-    
-    # Cascade delete (manually if not set in DB schema)
     db.query(models.PriceHistory).filter(models.PriceHistory.set_id == tracked_set.id).delete()
     db.delete(tracked_set)
     db.commit()
-    logger.info(f"Successfully deleted tracked set: {product_number}")
     return JSONResponse({"message": f"Deleted set {product_number}"})
 
 @app.get("/tracked")
@@ -368,13 +226,12 @@ async def update_prices_loop():
                 if price_float is not None:
                     history = models.PriceHistory(set_id=s.id, price=price_float)
                     db.add(history)
-                    logger.info(f"Updated price for {s.name}: ${price_float}")
             db.commit()
         except Exception as e:
             logger.error(f"Error in background update: {e}")
         finally:
             db.close()
-        await asyncio.sleep(86400) # Wait 24 hours
+        await asyncio.sleep(86400)
 
 @app.on_event("startup")
 async def startup_event():
