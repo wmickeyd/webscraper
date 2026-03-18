@@ -138,7 +138,21 @@ def get_main_text(url, timeout=10):
     except Exception as e:
         return f"Error reading page: {e}"
 
-app = FastAPI()
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start background task
+    task = asyncio.create_task(update_prices_loop())
+    yield
+    # Clean up
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        logger.info("Background task cancelled")
+
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 def health_check(db: Session = Depends(database.get_db)):
@@ -155,10 +169,11 @@ def read(url: str = Query(..., description="URL to read")):
     return JSONResponse({"url": url, "content": content})
 
 @app.get("/scrape")
-def scrape(url: str = Query(..., description="Product URL")):
+async def scrape(url: str = Query(..., description="Product URL")):
     logger.info(f"Received scrape request for: {url}")
     name, product_number = parse_name_and_number(url)
-    price = get_price(url)
+    # Run blocking Selenium call in a thread
+    price = await asyncio.to_thread(get_price, url)
     return JSONResponse({
         "name": name.title() if name else "",
         "product_number": product_number or "",
@@ -176,7 +191,8 @@ async def track_set(url: str = Query(...), db: Session = Depends(database.get_db
     if existing:
         return JSONResponse({"message": f"Already tracking {existing.name}", "id": existing.id})
     
-    price_str = get_price(url)
+    # Run blocking Selenium call in a thread
+    price_str = await asyncio.to_thread(get_price, url)
     price_float = _clean_price(price_str)
     new_set = models.TrackedSet(name=name.title(), product_number=product_number, url=url)
     db.add(new_set)
@@ -221,7 +237,8 @@ async def update_prices_loop():
         try:
             sets = db.query(models.TrackedSet).all()
             for s in sets:
-                price_str = get_price(s.url)
+                # Run blocking Selenium call in a thread to avoid blocking the event loop
+                price_str = await asyncio.to_thread(get_price, s.url)
                 price_float = _clean_price(price_str)
                 if price_float is not None:
                     history = models.PriceHistory(set_id=s.id, price=price_float)
@@ -232,10 +249,6 @@ async def update_prices_loop():
         finally:
             db.close()
         await asyncio.sleep(86400)
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(update_prices_loop())
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "serve":
