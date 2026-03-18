@@ -8,6 +8,11 @@ labels:
 - pairs:
     environment: development
 
+images:
+  - name: webscraper
+    newName: wmcdonald/webscraper
+    newTag: latest
+
 patches:
 - target:
     kind: Deployment
