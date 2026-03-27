@@ -1,7 +1,0 @@
-resources:
-- deployment.yaml
-- postgresql.yaml
-
-labels:
-- pairs:
-    app: webscraper
