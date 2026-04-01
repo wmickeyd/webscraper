@@ -93,7 +93,14 @@ def get_price(url, timeout=10):
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument(f"user-agent={HEADERS['User-Agent']}")
-    service = Service(ChromeDriverManager().install())
+
+    # Use the system-installed chromedriver when running in the container
+    # (installed via apt in the Dockerfile). Fall back to webdriver-manager for local dev.
+    system_driver = "/usr/bin/chromedriver"
+    if os.path.exists(system_driver):
+        service = Service(system_driver)
+    else:
+        service = Service(ChromeDriverManager().install())
     
     try:
         driver = webdriver.Chrome(service=service, options=opts)
