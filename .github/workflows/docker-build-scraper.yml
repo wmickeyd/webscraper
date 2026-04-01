@@ -1,11 +1,15 @@
-name: Build and Push Webscraper to Docker Hub
+name: Build and Push Webscraper
 
 on:
   push:
     branches:
       - main
-    paths:
-      - '**' # Run when any file in this repo changes
+    paths-ignore:
+      - '**.md'
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build-and-push:
@@ -20,16 +24,32 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/arm64 # Target only M1 Mac (ARM64)
+          platforms: linux/arm64
           push: true
-          tags: wmcdonald/webscraper:latest
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/webscraper:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/webscraper:latest
+
+      - name: Update manifest in gitops repo
+        env:
+          GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+        run: |
+          git clone https://x-access-token:${GITOPS_PAT}@github.com/wmickeyd/gitops.git
+          cd gitops
+          sed -i "s|image: ghcr.io/wmickeyd/webscraper:.*|image: ghcr.io/wmickeyd/webscraper:${{ github.sha }}|" webscraper/base/deployment.yaml
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add webscraper/base/deployment.yaml
+          git diff --staged --quiet || git commit -m "chore(webscraper): deploy ${{ github.sha }}"
+          git push
