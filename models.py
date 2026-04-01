@@ -10,6 +10,7 @@ class TrackedSet(Base):
     name = Column(String, index=True)
     product_number = Column(String, unique=True, index=True)
     url = Column(String, unique=True)
+    user_id = Column(String, index=True, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationship to price history

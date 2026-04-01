@@ -19,6 +19,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Database imports
 from sqlalchemy.orm import Session
@@ -91,9 +92,8 @@ def get_price(url, timeout=10):
     opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
-    opts.binary_location = "/usr/bin/chromium"
     opts.add_argument(f"user-agent={HEADERS['User-Agent']}")
-    service = Service("/usr/bin/chromedriver")
+    service = Service(ChromeDriverManager().install())
     
     try:
         driver = webdriver.Chrome(service=service, options=opts)
@@ -185,24 +185,24 @@ async def scrape(url: str = Query(..., description="Product URL")):
     })
 
 @app.post("/track")
-async def track_set(url: str = Query(...), db: Session = Depends(database.get_db)):
-    logger.info(f"Received track request for: {url}")
+async def track_set(url: str = Query(...), user_id: str = Query(None), db: Session = Depends(database.get_db)):
+    logger.info(f"Received track request for: {url} (user: {user_id})")
     name, product_number = parse_name_and_number(url)
     if not product_number:
         return JSONResponse({"error": "Invalid LEGO URL"}, status_code=400)
-    
+
     existing = db.query(models.TrackedSet).filter(models.TrackedSet.product_number == product_number).first()
     if existing:
         return JSONResponse({"message": f"Already tracking {existing.name}", "id": existing.id})
-    
+
     # Run blocking Selenium call in a thread
     price_str = await asyncio.to_thread(get_price, url)
     price_float = _clean_price(price_str)
-    new_set = models.TrackedSet(name=name.title(), product_number=product_number, url=url)
+    new_set = models.TrackedSet(name=name.title(), product_number=product_number, url=url, user_id=user_id)
     db.add(new_set)
     db.commit()
     db.refresh(new_set)
-    
+
     if price_float is not None:
         history = models.PriceHistory(set_id=new_set.id, price=price_float)
         db.add(history)
@@ -220,8 +220,11 @@ def delete_tracked(product_number: str, db: Session = Depends(database.get_db)):
     return JSONResponse({"message": f"Deleted set {product_number}"})
 
 @app.get("/tracked")
-def list_tracked(db: Session = Depends(database.get_db)):
-    sets = db.query(models.TrackedSet).all()
+def list_tracked(user_id: str = Query(None), db: Session = Depends(database.get_db)):
+    query = db.query(models.TrackedSet)
+    if user_id:
+        query = query.filter(models.TrackedSet.user_id == user_id)
+    sets = query.all()
     results = []
     for s in sets:
         latest_price = db.query(models.PriceHistory).filter(models.PriceHistory.set_id == s.id).order_by(models.PriceHistory.timestamp.desc()).first()
