@@ -36,7 +36,8 @@ def run_migrations():
     from alembic import command
     from sqlalchemy import inspect, text
 
-    alembic_cfg = Config("alembic.ini")
+    ini_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alembic.ini")
+    alembic_cfg = Config(ini_path)
 
     with database.engine.connect() as conn:
         inspector = inspect(conn)

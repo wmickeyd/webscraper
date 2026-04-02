@@ -17,6 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code
 COPY *.py .
+COPY alembic.ini .
+COPY alembic/ alembic/
 
 # Set environment variables for Chromium and SSL
 ENV CHROME_BIN=/usr/bin/chromium
