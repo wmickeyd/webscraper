@@ -1,6 +1,7 @@
 from bs4 import BeautifulSoup
 import requests
 import sys
+import os
 import json
 import re
 import asyncio
@@ -29,8 +30,30 @@ import database, models
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize database tables
-models.Base.metadata.create_all(bind=database.engine)
+def run_migrations():
+    """Run Alembic migrations on startup, stamping existing databases if needed."""
+    from alembic.config import Config
+    from alembic import command
+    from sqlalchemy import inspect, text
+
+    alembic_cfg = Config("alembic.ini")
+
+    with database.engine.connect() as conn:
+        inspector = inspect(conn)
+        tables = inspector.get_table_names()
+        has_alembic = "alembic_version" in tables
+        has_tracked_sets = "tracked_sets" in tables
+
+        if has_tracked_sets and not has_alembic:
+            # Existing database predates Alembic — stamp at baseline before migrating
+            logger.info("Existing schema detected without alembic_version; stamping at 001")
+            command.stamp(alembic_cfg, "001")
+
+    logger.info("Running Alembic migrations...")
+    command.upgrade(alembic_cfg, "head")
+    logger.info("Migrations complete")
+
+run_migrations()
 
 HEADERS = {
     "User-Agent": (
