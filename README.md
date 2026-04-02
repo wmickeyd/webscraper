@@ -1,42 +1,109 @@
 # Webscraper & Product Tracker
 
-A FastAPI-based service designed for extracting web content and tracking product prices (specialized for LEGO sets).
+A FastAPI service for web content extraction and persistent LEGO set price tracking. Used by the `agent-orchestrator` as a tool backend and by the Discord bot for the LEGO tracking UI.
 
-## Features
+## Endpoints
 
-- **`/read`**: Convert any URL's content to readable Markdown-style text for further analysis.
-- **`/scrape`**: Extract product name, set number, and current price from a URL. Uses a combination of BeautifulSoup and Selenium (headless) for dynamic pages.
-- **`/track`**: Add a URL to a persistent database to track price changes over time.
-- **`/tracked`**: List all currently tracked sets with their latest price and historical data.
-- **Background Updates**: A daily background task automatically updates the price for all tracked sets.
+### Web Content
+
+`GET /read?url=<url>`
+
+Fetches a URL and converts the page content to clean markdown-style plain text (up to 6000 characters). Used by the agent's `read_url` tool to let the LLM reason about web page content.
+
+### Product Scraping
+
+`GET /scrape?url=<url>`
+
+Extracts the product name, LEGO set number, and current price from a product URL.
+
+Scraping strategy (in order):
+1. `requests` + BeautifulSoup — looks for `schema.org` structured data and meta price tags
+2. Selenium headless Chromium — fallback for JavaScript-rendered pages, waits up to 15 seconds for dynamic content
+
+```json
+{
+  "name": "Eiffel Tower",
+  "product_number": "10307",
+  "price": "629.99"
+}
+```
+
+### Price Tracking
+
+| Endpoint | Description |
+|---|---|
+| `POST /track?url=<url>&user_id=<id>` | Start tracking a LEGO set. Scrapes the current price immediately and saves to the database. Deduplicates by product number. |
+| `GET /tracked?user_id=<id>` | List tracked sets for a specific user with their latest price and last updated time. Omit `user_id` to return all tracked sets. |
+| `DELETE /track/<product_number>` | Stop tracking a set and delete its price history. |
+
+### Health
+
+`GET /health` — database connectivity check, returns `{"status": "healthy", "database": "up"}`
+
+## Background Price Updates
+
+A background task runs every 24 hours and updates the price for every tracked set. Updates are executed in parallel to keep runtime short regardless of how many sets are tracked.
+
+## Database Schema
+
+**`tracked_sets`**
+- `product_number` — unique LEGO set identifier (e.g. `10307`)
+- `name` — product name
+- `url` — source URL
+- `user_id` — Discord user ID who added the set
+- `created_at` — when tracking started
+
+**`price_history`**
+- `set_id` → FK to `tracked_sets`
+- `price` — recorded price
+- `timestamp` — when the price was captured
 
 ## Tech Stack
 
-- **Framework**: FastAPI
-- **Database**: PostgreSQL (via SQLAlchemy)
-- **Scraping**: `BeautifulSoup`, `Selenium` (Chrome/Chromium)
-- **Content Conversion**: `html2text`
-- **Automation**: `asyncio` for background processing
+- **Python 3.12+**
+- **FastAPI** + **uvicorn**
+- **BeautifulSoup4** — static HTML parsing
+- **Selenium** + **Chromium** — headless browser for dynamic pages
+- **webdriver-manager** — auto-resolves ChromeDriver for local development; uses system-installed `/usr/bin/chromedriver` in the container
+- **html2text** — HTML to plain text conversion
+- **SQLAlchemy** — ORM for PostgreSQL (or SQLite in dev)
+- **Alembic** — database migrations
 
 ## Setup
 
-1. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+### Environment Variables
 
-2. **System Requirements**:
-   - Google Chrome or Chromium installed.
-   - `chromedriver` available in your system PATH or at `/usr/bin/chromedriver`.
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:///./scraper.db` | Database connection string |
 
-3. **Database Configuration**:
-   Ensure you have a PostgreSQL instance running or update `database.py` with your connection string.
+For production use PostgreSQL:
+```
+DATABASE_URL=postgresql://user:password@host:5432/scraper_db
+```
 
-4. **Run the API**:
-   ```bash
-   python scraper.py serve
-   ```
+### System Requirements
 
-## Usage
+The container image installs `chromium` and `chromium-driver` via apt. For local development outside the container, `webdriver-manager` will automatically download a compatible ChromeDriver.
 
-Use the `/track` endpoint to add products by URL. The service will extract information and begin daily price monitoring. Historical data can be accessed via the database or through the `/tracked` endpoint.
+### Running Locally
+
+```bash
+pip install -r requirements.txt
+python scraper.py serve
+```
+
+### Kubernetes
+
+Deployed to the `webscraper-dev` namespace via ArgoCD. Includes a PostgreSQL StatefulSet.
+
+```bash
+kubectl apply -k gitops/webscraper/overlays/dev
+```
+
+## Deployment Notes
+
+- Container image built for `linux/arm64` (M1 Mac Mini cluster)
+- Pushed to `ghcr.io/wmickeyd/webscraper` on every push to `main`
+- ArgoCD detects the manifest update and redeploys automatically
+- Database credentials are managed via Kubernetes Sealed Secrets
