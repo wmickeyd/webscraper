@@ -16,8 +16,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('tracked_sets', sa.Column('user_id', sa.String(), nullable=True))
-    op.create_index('ix_tracked_sets_user_id', 'tracked_sets', ['user_id'], unique=False)
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing_columns = [c['name'] for c in inspector.get_columns('tracked_sets')]
+    if 'user_id' not in existing_columns:
+        op.add_column('tracked_sets', sa.Column('user_id', sa.String(), nullable=True))
+
+    existing_indexes = [i['name'] for i in inspector.get_indexes('tracked_sets')]
+    if 'ix_tracked_sets_user_id' not in existing_indexes:
+        op.create_index('ix_tracked_sets_user_id', 'tracked_sets', ['user_id'], unique=False)
 
 
 def downgrade() -> None:
