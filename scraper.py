@@ -147,15 +147,33 @@ def get_price(url, timeout=10):
         except: pass
     return None
 
-def parse_name_and_number(url):
+def parse_url_details(url):
+    domain = urlparse(url).netloc.lower()
+    retailer = "lego"
+    if "amazon" in domain:
+        retailer = "amazon"
+    elif "walmart" in domain:
+        retailer = "walmart"
+    elif "target" in domain:
+        retailer = "target"
+    
     path = urlparse(url).path.rstrip("/")
     last = unquote(path.split("/")[-1] or "")
+    
+    # LEGO.com pattern: set-name-12345
     m = re.search(r"-(\d+)$", last)
     if m:
-        prod = m.group(1)
+        product_number = m.group(1)
         name = last[: m.start()].replace("-", " ").strip()
-        return name, prod
-    return last.replace("-", " ").strip(), None
+        return name, product_number, retailer
+    
+    # Amazon/Walmart often have product IDs in the URL. 
+    # For now, we try to find a 5-7 digit number which is typical for LEGO.
+    m2 = re.search(r"\b(\d{5,7})\b", url)
+    product_number = m2.group(1) if m2 else None
+    name = last.replace("-", " ").replace("+", " ").strip()
+    
+    return name, product_number, retailer
 
 def get_main_text(url, timeout=10):
     try:
@@ -206,30 +224,53 @@ def read(url: str = Query(..., description="URL to read")):
 @app.get("/scrape")
 async def scrape(url: str = Query(..., description="Product URL")):
     logger.info(f"Received scrape request for: {url}")
-    name, product_number = parse_name_and_number(url)
+    name, product_number, retailer = parse_url_details(url)
     # Run blocking Selenium call in a thread
     price = await asyncio.to_thread(get_price, url)
     return JSONResponse({
         "name": name.title() if name else "",
         "product_number": product_number or "",
+        "retailer": retailer,
         "price": price
     })
 
 @app.post("/track")
-async def track_set(url: str = Query(...), user_id: str = Query(None), db: Session = Depends(database.get_db)):
-    logger.info(f"Received track request for: {url} (user: {user_id})")
-    name, product_number = parse_name_and_number(url)
+async def track_set(
+    url: str = Query(...), 
+    user_id: str = Query(None), 
+    target_price: float = Query(None),
+    db: Session = Depends(database.get_db)
+):
+    logger.info(f"Received track request for: {url} (user: {user_id}, target: {target_price})")
+    name, product_number, retailer = parse_url_details(url)
     if not product_number:
-        return JSONResponse({"error": "Invalid LEGO URL"}, status_code=400)
+        return JSONResponse({"error": "Could not identify LEGO set number from URL"}, status_code=400)
 
-    existing = db.query(models.TrackedSet).filter(models.TrackedSet.product_number == product_number).first()
+    existing = db.query(models.TrackedSet).filter(
+        models.TrackedSet.product_number == product_number,
+        models.TrackedSet.user_id == user_id,
+        models.TrackedSet.retailer == retailer
+    ).first()
+    
     if existing:
-        return JSONResponse({"message": f"Already tracking {existing.name}", "id": existing.id})
+        if target_price is not None:
+            existing.target_price = target_price
+            db.commit()
+            return JSONResponse({"message": f"Updated target price for {existing.name} to ${target_price}", "id": existing.id})
+        return JSONResponse({"message": f"Already tracking {existing.name} from {retailer}", "id": existing.id})
 
     # Run blocking Selenium call in a thread
     price_str = await asyncio.to_thread(get_price, url)
     price_float = _clean_price(price_str)
-    new_set = models.TrackedSet(name=name.title(), product_number=product_number, url=url, user_id=user_id)
+    
+    new_set = models.TrackedSet(
+        name=name.title(), 
+        product_number=product_number, 
+        url=url, 
+        user_id=user_id,
+        retailer=retailer,
+        target_price=target_price
+    )
     db.add(new_set)
     db.commit()
     db.refresh(new_set)
@@ -238,17 +279,29 @@ async def track_set(url: str = Query(...), user_id: str = Query(None), db: Sessi
         history = models.PriceHistory(set_id=new_set.id, price=price_float)
         db.add(history)
         db.commit()
-    return JSONResponse({"message": f"Now tracking {new_set.name}", "price": price_float})
+    return JSONResponse({"message": f"Now tracking {new_set.name} from {retailer}", "price": price_float})
 
 @app.delete("/track/{product_number}")
-def delete_tracked(product_number: str, db: Session = Depends(database.get_db)):
-    tracked_set = db.query(models.TrackedSet).filter(models.TrackedSet.product_number == product_number).first()
+def delete_tracked(
+    product_number: str, 
+    user_id: str = Query(None), 
+    retailer: str = Query(None), 
+    db: Session = Depends(database.get_db)
+):
+    query = db.query(models.TrackedSet).filter(models.TrackedSet.product_number == product_number)
+    if user_id:
+        query = query.filter(models.TrackedSet.user_id == user_id)
+    if retailer:
+        query = query.filter(models.TrackedSet.retailer == retailer)
+        
+    tracked_set = query.first()
     if not tracked_set:
         return JSONResponse({"error": "Set not found"}, status_code=404)
+    
     db.query(models.PriceHistory).filter(models.PriceHistory.set_id == tracked_set.id).delete()
     db.delete(tracked_set)
     db.commit()
-    return JSONResponse({"message": f"Deleted set {product_number}"})
+    return JSONResponse({"message": f"Deleted set {product_number} from {tracked_set.retailer}"})
 
 @app.get("/tracked")
 def list_tracked(user_id: str = Query(None), db: Session = Depends(database.get_db)):
@@ -262,8 +315,10 @@ def list_tracked(user_id: str = Query(None), db: Session = Depends(database.get_
         results.append({
             "name": s.name,
             "product_number": s.product_number,
+            "retailer": s.retailer,
             "url": s.url,
             "latest_price": latest_price.price if latest_price else None,
+            "target_price": s.target_price,
             "last_updated": latest_price.timestamp.isoformat() if latest_price else None
         })
     return JSONResponse(results)
@@ -281,6 +336,14 @@ async def update_prices_loop():
                 if price_float is not None:
                     history = models.PriceHistory(set_id=s.id, price=price_float)
                     db.add(history)
+                    
+                    # Check for target price hit
+                    if s.target_price and price_float <= s.target_price:
+                        # Only notify if we haven't notified for this price or lower before
+                        if s.last_notified_price is None or price_float < s.last_notified_price:
+                            logger.info(f"TARGET PRICE HIT for {s.name}: ${price_float} (Target: ${s.target_price})")
+                            s.last_notified_price = price_float
+                            # Note: Notification logic would be triggered here
             db.commit()
         except Exception as e:
             logger.error(f"Error in background update: {e}")
