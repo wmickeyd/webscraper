@@ -323,6 +323,63 @@ def list_tracked(user_id: str = Query(None), db: Session = Depends(database.get_
         })
     return JSONResponse(results)
 
+@app.get("/track/{product_number}/history")
+def get_history(product_number: str, user_id: str = Query(...), retailer: str = Query("lego"), db: Session = Depends(database.get_db)):
+    """Returns price history for a specific set."""
+    tracked_set = db.query(models.TrackedSet).filter(
+        models.TrackedSet.product_number == product_number,
+        models.TrackedSet.user_id == user_id,
+        models.TrackedSet.retailer == retailer
+    ).first()
+    
+    if not tracked_set:
+        return JSONResponse({"error": "Set not found"}, status_code=404)
+        
+    history = db.query(models.PriceHistory).filter(
+        models.PriceHistory.set_id == tracked_set.id
+    ).order_by(models.PriceHistory.timestamp.asc()).all()
+    
+    return JSONResponse({
+        "name": tracked_set.name,
+        "product_number": tracked_set.product_number,
+        "retailer": tracked_set.retailer,
+        "history": [
+            {"price": h.price, "timestamp": h.timestamp.isoformat()}
+            for h in history
+        ]
+    })
+
+@app.get("/alerts")
+def get_alerts(db: Session = Depends(database.get_db)):
+    """Returns sets that have hit their target price and haven't been notified for this price yet."""
+    results = []
+    sets = db.query(models.TrackedSet).filter(models.TrackedSet.target_price.isnot(None)).all()
+    for s in sets:
+        latest = db.query(models.PriceHistory).filter(models.PriceHistory.set_id == s.id).order_by(models.PriceHistory.timestamp.desc()).first()
+        if latest and latest.price <= s.target_price:
+            if s.last_notified_price is None or latest.price < s.last_notified_price:
+                results.append({
+                    "id": s.id,
+                    "name": s.name,
+                    "product_number": s.product_number,
+                    "retailer": s.retailer,
+                    "url": s.url,
+                    "user_id": s.user_id,
+                    "current_price": latest.price,
+                    "target_price": s.target_price
+                })
+    return JSONResponse(results)
+
+@app.post("/track/{set_id}/ack")
+def acknowledge_alert(set_id: int, price: float = Query(...), db: Session = Depends(database.get_db)):
+    """Updates the last_notified_price for a set to prevent duplicate alerts."""
+    tracked_set = db.query(models.TrackedSet).filter(models.TrackedSet.id == set_id).first()
+    if not tracked_set:
+        return JSONResponse({"error": "Set not found"}, status_code=404)
+    tracked_set.last_notified_price = price
+    db.commit()
+    return JSONResponse({"message": f"Acknowledged alert for {tracked_set.name} at ${price}"})
+
 async def update_prices_loop():
     while True:
         logger.info("Starting background price update...")
@@ -337,13 +394,10 @@ async def update_prices_loop():
                     history = models.PriceHistory(set_id=s.id, price=price_float)
                     db.add(history)
                     
-                    # Check for target price hit
+                    # Log target price hit for monitoring
                     if s.target_price and price_float <= s.target_price:
-                        # Only notify if we haven't notified for this price or lower before
                         if s.last_notified_price is None or price_float < s.last_notified_price:
-                            logger.info(f"TARGET PRICE HIT for {s.name}: ${price_float} (Target: ${s.target_price})")
-                            s.last_notified_price = price_float
-                            # Note: Notification logic would be triggered here
+                            logger.info(f"ALERT DETECTED for {s.name}: ${price_float} (Target: ${s.target_price})")
             db.commit()
         except Exception as e:
             logger.error(f"Error in background update: {e}")
